@@ -1,0 +1,22 @@
+version: '3.9'
+
+x-default:
+  &defaults
+  restart: always
+  logging:
+    options:
+      max-size: '1m'
+      max-file: '1'
+    driver: json-file
+
+services:
+  gopload:
+    <<: *defaults
+    image: endoffight/gopload
+    volumes:
+      - ./gopload/:/tmp/gopload/
+    ports:
+      - 8888:8088
+    environment:
+      - SERVER_DOMAIN="yourdomain"
+      - MAX_SIZE="50"

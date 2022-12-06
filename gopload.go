@@ -143,7 +143,7 @@ func addRoute() *gin.Engine {
 	router.PUT("/:filename", func(c *gin.Context) {
 		length, _ := strconv.Atoi(c.GetHeader("Content-Length"))
 		if length > conf.MaxSize {
-			c.String(http.StatusForbidden, "file too large")
+			c.String(http.StatusForbidden, fmt.Sprintf("file too large, max size:%dMB", conf.MaxSize))
 			return
 		}
 		fileName := c.Param("filename")
