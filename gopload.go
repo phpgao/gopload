@@ -33,14 +33,14 @@ var log = logrus.New()
 // var debug = true
 
 type config struct {
-	Bind           string
-	Debug          bool
-	MaxInt         int
-	MaxSize        int
-	Length         int
-	Dir            string
-	Path           string
-	DownloadDomain string
+	Bind    string
+	Debug   bool
+	MaxInt  int
+	MaxSize int
+	Length  int
+	Dir     string
+	Path    string
+	Http    bool
 }
 
 func init() {
@@ -112,15 +112,11 @@ func main() {
 				Destination: &conf.MaxInt,
 				Aliases:     []string{"m"},
 			},
-			&cli.StringFlag{
-				Name: "domain",
-				Usage: "domain for download file,eg. https://your-domain.com\n" +
-					"if not set, value will be conf.schema + conf.domain + conf.port",
-				Value:       "",
-				Destination: &conf.DownloadDomain,
-				EnvVars:     []string{"SERVER_DOMAIN"},
-				Required:    true,
-				Aliases:     []string{"dd"},
+			&cli.BoolFlag{
+				Name:        "k",
+				Usage:       "disable https",
+				EnvVars:     []string{"USE_HTTP"},
+				Destination: &conf.Http,
 			},
 		},
 	}
@@ -132,7 +128,11 @@ func main() {
 func gopload(c *cli.Context) error {
 	preCheck()
 	router := addRoute()
-	_ = router.Run(conf.Bind)
+	log.Infof("gopload bind: %s", conf.Bind)
+	err := router.Run(conf.Bind)
+	if err != nil {
+		log.WithError(err).Error("error running server")
+	}
 	return nil
 }
 
@@ -143,8 +143,16 @@ func addRoute() *gin.Engine {
 	router.PUT("/:filename", func(c *gin.Context) {
 		length, _ := strconv.Atoi(c.GetHeader("Content-Length"))
 		if length > conf.MaxSize {
-			c.String(http.StatusForbidden, fmt.Sprintf("file too large, max size:%dMB", conf.MaxSize))
+			c.String(http.StatusForbidden, "file too large")
 			return
+		}
+		//domain
+		domain := c.Request.Host
+		var schema string
+		if conf.Http {
+			schema = "http"
+		} else {
+			schema = "https"
 		}
 		fileName := c.Param("filename")
 		dstPath, downloadPath, err := genFilePath(fileName)
@@ -158,8 +166,8 @@ func addRoute() *gin.Engine {
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, int64(conf.MaxSize))
 		log.Debug(dstPath)
 		_, _ = io.Copy(dst, c.Request.Body)
-		wget := fmt.Sprintf("wget %s/%s", conf.DownloadDomain, downloadPath)
-		curl := fmt.Sprintf("curl -O %s/%s", conf.DownloadDomain, downloadPath)
+		wget := fmt.Sprintf("wget %s://%s/%s", schema, domain, downloadPath)
+		curl := fmt.Sprintf("curl -O %s://%s/%s", schema, domain, downloadPath)
 		c.String(http.StatusOK, fmt.Sprintf("\n%s uploaded!\n%s\n%s\n", fileName, wget, curl))
 	})
 	router.GET("/:path/:filename", func(c *gin.Context) {
