@@ -125,7 +125,7 @@ func (s *Server) UploadFile(c *gin.Context) {
 	}
 	wgetUrl := fmt.Sprintf("wget https://%s/%s", c.Request.Host, downloadPath)
 	curlUrl := fmt.Sprintf("curl -O https://%s/%s", c.Request.Host, downloadPath)
-	c.String(http.StatusOK, fmt.Sprintf("\n%s 上传成功！\n%s\n%s\n", fileName, wgetUrl, curlUrl))
+	c.String(http.StatusOK, fmt.Sprintf("\n%s upload \n%s\n%s\n", fileName, wgetUrl, curlUrl))
 }
 
 func (s *Server) genFilePath(fileName string) (string, string, error) {
