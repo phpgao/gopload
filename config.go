@@ -1,9 +1,10 @@
-package config
+package main
 
 import (
-	"log"
 	"os"
 	"path/filepath"
+
+	"github.com/phpgao/tlog"
 )
 
 type Config struct {
@@ -20,10 +21,10 @@ func (c *Config) GetDir() string {
 	if c.Dir == "" {
 		return filepath.Join(os.TempDir(), "gopload")
 	}
-
 	path, err := filepath.Abs(c.Dir)
 	if err != nil {
-		log.Panicf("path [%s] error: %s", c.Dir, err)
+		tlog.Fatalf("path [%s] error: %s", c.Dir, err)
 	}
+	tlog.Infof("dir: %s", path)
 	return path
 }

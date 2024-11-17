@@ -1,4 +1,4 @@
-package service
+package main
 
 import (
 	"fmt"
@@ -10,12 +10,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/phpgao/tlog"
+	"github.com/phpgao/tlog/handler"
 	"github.com/robfig/cron/v3"
-	log "github.com/sirupsen/logrus"
-	ginlogrus "github.com/toorop/gin-logrus"
-
-	"github.com/phpgao/gopload/internal/config"
-	"github.com/phpgao/gopload/internal/util"
 )
 
 const (
@@ -25,13 +22,13 @@ const (
 
 type Server struct {
 	Router  *gin.Engine
-	Config  *config.Config
+	Config  *Config
 	Cron    *cron.Cron
 	Dir     string
 	MaxSize int
 }
 
-func NewServer(conf *config.Config) *Server {
+func NewServer(conf *Config) *Server {
 	return &Server{
 		Config: conf,
 		Dir:    conf.GetDir(),
@@ -43,13 +40,11 @@ func NewServer(conf *config.Config) *Server {
 func (s *Server) PreCheck() error {
 	err := os.MkdirAll(s.Dir, os.ModePerm)
 	if err != nil {
-		log.Errorf("mkdir [%s] error: %s", s.Dir, err)
+		tlog.Errorf("mkdir [%s] error: %s", s.Dir, err)
 		return err
 	}
-
 	s.MaxSize = s.Config.MaxInt << 20
-	log.Infof("max size: %d MB", s.MaxSize)
-	log.Infof("s.Config.MaxInt size: %d MB", s.Config.MaxInt)
+	tlog.Infof("MaxSize: %dMB", s.MaxSize)
 	if !s.Config.Debug {
 		gin.SetMode(gin.ReleaseMode)
 	}
@@ -61,26 +56,29 @@ func (s *Server) Run() error {
 	if err != nil {
 		return err
 	}
-
 	s.addCron()
 	defer s.stopCron()
-
 	s.addRoute()
-
 	err = s.Router.Run(s.Config.Bind)
 	if err != nil {
-		log.WithError(err).Error("error running server")
+		tlog.Fatalf("listen [%s] error: %s", s.Config.Bind, err)
 	}
 
 	return nil
 }
 
 func (s *Server) addRoute() {
-	s.Router.Use(ginlogrus.Logger(log.New()), gin.Recovery())
+	s.Router.Use(handler.GinLogger(), gin.Recovery())
 	s.Router.PUT("/:filename", func(c *gin.Context) {
 		s.UploadFile(c)
 	})
 	s.Router.POST("/:filename", func(c *gin.Context) {
+		s.UploadFile(c)
+	})
+	s.Router.PUT("/", func(c *gin.Context) {
+		s.UploadFile(c)
+	})
+	s.Router.POST("/", func(c *gin.Context) {
 		s.UploadFile(c)
 	})
 	s.Router.GET("/:path/:filename", func(c *gin.Context) {
@@ -94,42 +92,49 @@ func (s *Server) addRoute() {
 func (s *Server) UploadFile(c *gin.Context) {
 	length, err := strconv.Atoi(c.GetHeader("Content-Length"))
 	if err != nil {
-		c.String(http.StatusBadRequest, "无法解析 Content-Length 头部。")
+		c.String(http.StatusBadRequest, "invalid content length")
 		return
 	}
-	log.Infof("length: %d", length)
-	log.Infof("MaxSize: %d", s.MaxSize)
 	if length > s.MaxSize {
-		c.String(http.StatusRequestEntityTooLarge, "文件过大。")
+		c.String(http.StatusRequestEntityTooLarge, "file too large,current %dMB, max %dMB", length>>20, s.MaxSize)
 		return
 	}
 	fileName := c.Param("filename")
+	if fileName == "" || len(fileName) > 255 {
+		c.String(http.StatusBadRequest, "invalid file name")
+		return
+	}
 	dstPath, downloadPath, err := s.genFilePath(fileName)
-	log.Infof("dstPath: %s, downloadPath: %s", dstPath, downloadPath)
+	tlog.Infof("dstPath: %s, downloadPath: %s", dstPath, downloadPath)
 	if err != nil {
-		c.String(http.StatusInternalServerError, "无法创建文件。")
+		c.String(http.StatusInternalServerError, "can not create file")
 		return
 	}
 	dst, err := os.Create(dstPath)
 	if err != nil {
-		c.String(http.StatusInternalServerError, "文件上传失败。")
+		c.String(http.StatusInternalServerError, "can not create file")
 		return
 	}
-	defer dst.Close()
+	defer func(dst *os.File) {
+		_ = dst.Close()
+	}(dst)
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, int64(s.MaxSize))
-	log.Debug(dstPath)
 	if _, err := io.Copy(dst, c.Request.Body); err != nil {
-		c.String(http.StatusInternalServerError, "文件上传失败。")
-		log.Errorf("copy error: %s", err)
+		c.String(http.StatusInternalServerError, "file copy error")
+		tlog.Errorf("copy error: %s", err)
 		return
 	}
-	wgetUrl := fmt.Sprintf("wget https://%s/%s", c.Request.Host, downloadPath)
-	curlUrl := fmt.Sprintf("curl -O https://%s/%s", c.Request.Host, downloadPath)
+	protocol := "http"
+	if c.Request.TLS != nil {
+		protocol = "https"
+	}
+	wgetUrl := fmt.Sprintf("%s://%s/%s", protocol, c.Request.Host, downloadPath)
+	curlUrl := fmt.Sprintf("curl -O %s://%s/%s", protocol, c.Request.Host, downloadPath)
 	c.String(http.StatusOK, fmt.Sprintf("\n%s upload \n%s\n%s\n", fileName, wgetUrl, curlUrl))
 }
 
 func (s *Server) genFilePath(fileName string) (string, string, error) {
-	randomDir := util.RandStringBytes(s.Config.Length)
+	randomDir := RandStringBytes(s.Config.Length)
 	uploadFolder := filepath.Join(s.Dir, randomDir)
 	err := os.MkdirAll(uploadFolder, os.ModePerm)
 	if err != nil {
@@ -154,9 +159,9 @@ func (s *Server) stopCron() {
 }
 
 func (s *Server) ScanAndDelete() {
-	err := util.CleanupOldFilesAndEmptyDirs(s.Dir, time.Duration(s.Config.Expire)*24*time.Hour)
+	err := CleanupOldFilesAndEmptyDirs(s.Dir, time.Duration(s.Config.Expire)*24*time.Hour)
 	if err != nil {
-		log.Errorf("scan and delete error: %s", err)
+		tlog.Errorf("scan and delete error: %s", err)
 		return
 	}
 }
